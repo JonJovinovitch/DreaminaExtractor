@@ -47,6 +47,9 @@ async function fetchFollowingApprovedRedirects(input) {
     if (!response.ok) throw new Error(`The share page returned HTTP ${response.status}.`);
     const text = await response.text();
     if (text.length > MAX_HTML_BYTES) throw new Error('The share page is too large to inspect safely.');
+    if (/Coming soon to your country or region/i.test(text)) {
+      throw new Error('Dreamina returned its regional-availability page instead of the shared video. Try again only from a region where Dreamina makes this public page available.');
+    }
     return { html: text, pageUrl: target.href };
   }
   throw new Error('Too many redirects from the share link.');
