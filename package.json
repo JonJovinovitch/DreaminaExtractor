@@ -1,0 +1,12 @@
+{
+  "name": "dreamina-video-extractor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Extracts publicly exposed direct-video URLs from Dreamina share pages.",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}
