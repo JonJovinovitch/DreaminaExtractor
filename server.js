@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { fetch as undiciFetch, ProxyAgent } from 'undici';
 
 const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || '0.0.0.0';
 const ROOT = process.cwd();
 const SHARE_HOSTS = new Set(['dreamina.capcut.com', 'www.capcut.com', 'capcut.com']);
 const downloads = new Map();
@@ -150,6 +151,7 @@ async function handleDownload(request, response, token) {
 
 export const server = createServer(async (request, response) => {
   const path = new URL(request.url, `http://${request.headers.host}`).pathname;
+  if (request.method === 'GET' && path === '/health') return json(response, 200, { status: 'ok' });
   if (request.method === 'POST' && path === '/api/extract') return handleExtract(request, response);
   if (request.method === 'GET' && path.startsWith('/api/download/')) return handleDownload(request, response, path.slice('/api/download/'.length));
   if (request.method === 'GET' && path === '/') return serveFile(response, 'index.html', 'text/html; charset=utf-8');
@@ -159,5 +161,5 @@ export const server = createServer(async (request, response) => {
 });
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  server.listen(PORT, () => console.log(`Dreamina Video Extractor running at http://localhost:${PORT}`));
+  server.listen(PORT, HOST, () => console.log(`Dreamina Video Extractor running on ${HOST}:${PORT}`));
 }
