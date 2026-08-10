@@ -1,14 +1,35 @@
 import { createServer } from 'node:http';
 import { createReadStream, existsSync } from 'node:fs';
 import { extname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Readable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
+import { fetch as undiciFetch, ProxyAgent } from 'undici';
 
 const PORT = Number(process.env.PORT || 3000);
 const ROOT = process.cwd();
 const SHARE_HOSTS = new Set(['dreamina.capcut.com', 'www.capcut.com', 'capcut.com']);
 const downloads = new Map();
 const MAX_HTML_BYTES = 2_000_000;
+const proxyUrl = process.env.OUTBOUND_PROXY_URL;
+
+let proxyDispatcher;
+if (proxyUrl) {
+  try {
+    const url = new URL(proxyUrl);
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Use an HTTP or HTTPS proxy URL.');
+    proxyDispatcher = new ProxyAgent(url.href);
+    console.log('Outbound Dreamina requests will use the configured proxy.');
+  } catch (error) {
+    throw new Error(`Invalid OUTBOUND_PROXY_URL: ${error.message}`);
+  }
+}
+
+function fetchUpstream(input, options = {}) {
+  // Deliberately used only for remote Dreamina/media requests. Requests from a
+  // visitor to this app, health checks, and other host traffic are unaffected.
+  return undiciFetch(input, proxyDispatcher ? { ...options, dispatcher: proxyDispatcher } : options);
+}
 
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -33,7 +54,7 @@ async function fetchFollowingApprovedRedirects(input) {
   let target = new URL(input);
   for (let hop = 0; hop < 6; hop += 1) {
     if (!SHARE_HOSTS.has(target.hostname.toLowerCase())) throw new Error('The link redirected outside approved Dreamina/CapCut hosts.');
-    const response = await fetch(target, {
+    const response = await fetchUpstream(target, {
       redirect: 'manual',
       headers: { 'user-agent': 'DreaminaVideoExtractor/1.0', accept: 'text/html,application/xhtml+xml' },
       signal: AbortSignal.timeout(15_000)
@@ -114,7 +135,7 @@ async function handleDownload(request, response, token) {
   downloads.delete(token);
   if (!item || item.expires < Date.now()) return json(response, 410, { error: 'This download link expired. Extract it again.' });
   try {
-    const upstream = await fetch(item.url, { headers: { referer: item.referer, 'user-agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(60_000) });
+    const upstream = await fetchUpstream(item.url, { headers: { referer: item.referer, 'user-agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(60_000) });
     if (!upstream.ok || !upstream.body) return json(response, 502, { error: 'The media host did not provide the file.' });
     const extension = extname(new URL(item.url).pathname) || '.mp4';
     response.writeHead(200, {
@@ -127,7 +148,7 @@ async function handleDownload(request, response, token) {
   } catch { json(response, 502, { error: 'The media download failed.' }); }
 }
 
-createServer(async (request, response) => {
+export const server = createServer(async (request, response) => {
   const path = new URL(request.url, `http://${request.headers.host}`).pathname;
   if (request.method === 'POST' && path === '/api/extract') return handleExtract(request, response);
   if (request.method === 'GET' && path.startsWith('/api/download/')) return handleDownload(request, response, path.slice('/api/download/'.length));
@@ -135,4 +156,8 @@ createServer(async (request, response) => {
   if (request.method === 'GET' && path === '/app.js') return serveFile(response, 'app.js', 'text/javascript; charset=utf-8');
   if (request.method === 'GET' && path === '/styles.css') return serveFile(response, 'styles.css', 'text/css; charset=utf-8');
   json(response, 404, { error: 'Not found.' });
-}).listen(PORT, () => console.log(`Dreamina Video Extractor running at http://localhost:${PORT}`));
+});
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  server.listen(PORT, () => console.log(`Dreamina Video Extractor running at http://localhost:${PORT}`));
+}

@@ -6,11 +6,35 @@ It does not log in, bypass private links, DRM, regional controls, or other platf
 
 ## Run locally or in GitHub Codespaces
 
-Requires Node.js 20 or newer. There are no dependencies to install.
+Requires Node.js 20 or newer. Install the app dependency, then start it:
 
 ```bash
+npm install
 npm start
 ```
+
+## Use an Australian IP for page loading
+
+The extractor can send **only its outbound Dreamina and media requests** through an Australian HTTP proxy. Your computer, browser, and visitors to the app are not put on a VPN or proxy.
+
+1. Obtain an Australian HTTP(S) proxy endpoint from a provider that permits your intended use.
+2. In Railway, open the service, then **Variables**, and add this variable:
+
+   ```text
+   OUTBOUND_PROXY_URL=http://USERNAME:PASSWORD@AU_PROXY_HOST:PORT
+   ```
+
+   URL-encode special characters in the username or password (for example, `@` becomes `%40`). Do not commit this credential to GitHub.
+3. Redeploy the service. Its startup log will say `Outbound Dreamina requests will use the configured proxy.`
+
+To run locally in PowerShell for one app session:
+
+```powershell
+$env:OUTBOUND_PROXY_URL = 'http://USERNAME:PASSWORD@AU_PROXY_HOST:PORT'
+npm start
+```
+
+Remove the variable or delete it in Railway to return to the host's normal IP address.
 
 Open `http://localhost:3000`, paste a Dreamina/CapCut share URL, and choose **Find video**. If a public video file is found, use **Download**. Links expire after ten minutes and are single-use.
 
@@ -30,7 +54,7 @@ Open `http://localhost:3000`, paste a Dreamina/CapCut share URL, and choose **Fi
 3. Railway detects the Node app and uses the included `railway.json` configuration to run `npm start`.
 4. After it deploys, open the service **Settings → Networking → Generate Domain**. That generated Railway URL is the live app. Future pushes to `main` redeploy it automatically.
 
-No environment variables or database are required. GitHub Pages alone cannot host this app because the server safely fetches the share page and streams the download; it needs a Node server such as Railway.
+No environment variables or database are required unless you want proxy-based regional testing. GitHub Pages alone cannot host this app because the server safely fetches the share page and streams the download; it needs a Node server such as Railway.
 
 If you later want it at a URL under `jonjonjovi.com`, add a Railway custom domain such as `video.jonjonjovi.com`, then create the DNS record Railway shows in your GoDaddy DNS manager. Keep the Railway-generated domain active until the custom domain works.
 

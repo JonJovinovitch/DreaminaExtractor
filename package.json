@@ -5,6 +5,9 @@
   "description": "Extracts publicly exposed direct-video URLs from Dreamina share pages.",
   "type": "module",
   "engines": { "node": ">=20" },
+  "dependencies": {
+    "undici": "^6.21.3"
+  },
   "scripts": {
     "start": "node server.js",
     "test": "node --test"
