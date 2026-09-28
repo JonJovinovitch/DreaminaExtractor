@@ -1,6 +1,9 @@
 const form = document.querySelector('#extract-form');
 const input = document.querySelector('#share-url');
 const result = document.querySelector('#result');
+const relayForm = document.querySelector('#relay-form');
+const relayInput = document.querySelector('#relay-url');
+const relayResult = document.querySelector('#relay-result');
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -21,4 +24,20 @@ form.addEventListener('submit', async (event) => {
     }));
   } catch (error) { result.className = 'error'; result.textContent = error.message; }
   finally { button.disabled = false; button.textContent = 'Find video'; }
+});
+
+relayForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = relayForm.querySelector('button');
+  button.disabled = true; button.textContent = 'Creating…';
+  relayResult.hidden = false; relayResult.className = ''; relayResult.textContent = 'Looking for a video declared by your page…';
+  try {
+    const response = await fetch('/api/relay/extract', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: relayInput.value.trim() }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not create a relay URL.');
+    relayResult.className = 'success';
+    const link = document.createElement('a'); link.href = data.relayUrl; link.target = '_blank'; link.rel = 'noreferrer'; link.textContent = `Open temporary relay (expires in ${data.expiresInSeconds / 60} minutes)`;
+    relayResult.replaceChildren(link);
+  } catch (error) { relayResult.className = 'error'; relayResult.textContent = error.message; }
+  finally { button.disabled = false; button.textContent = 'Create relay'; }
 });

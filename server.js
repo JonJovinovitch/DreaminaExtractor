@@ -11,7 +11,12 @@ const HOST = process.env.HOST || '0.0.0.0';
 const ROOT = process.cwd();
 const SHARE_HOSTS = new Set(['dreamina.capcut.com', 'www.capcut.com', 'capcut.com']);
 const downloads = new Map();
+const relays = new Map();
 const MAX_HTML_BYTES = 2_000_000;
+const OWNED_SOURCE_HOSTS = new Set((process.env.OWNED_SOURCE_HOSTS || 'jonjonjovi.com,www.jonjonjovi.com')
+  .split(',').map((host) => host.trim().toLowerCase()).filter(Boolean));
+const OWNED_MEDIA_HOSTS = new Set((process.env.OWNED_MEDIA_HOSTS || [...OWNED_SOURCE_HOSTS].join(','))
+  .split(',').map((host) => host.trim().toLowerCase()).filter(Boolean));
 const proxyUrl = process.env.OUTBOUND_PROXY_URL;
 
 let proxyDispatcher;
@@ -51,6 +56,13 @@ function isMediaUrl(value) {
   } catch { return false; }
 }
 
+function isAllowedOwnedUrl(value, hosts) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && hosts.has(url.hostname.toLowerCase());
+  } catch { return false; }
+}
+
 async function fetchFollowingApprovedRedirects(input) {
   let target = new URL(input);
   for (let hop = 0; hop < 6; hop += 1) {
@@ -75,6 +87,29 @@ async function fetchFollowingApprovedRedirects(input) {
     return { html: text, pageUrl: target.href };
   }
   throw new Error('Too many redirects from the share link.');
+}
+
+async function fetchOwnedPage(input) {
+  let target = new URL(input);
+  for (let hop = 0; hop < 6; hop += 1) {
+    if (!isAllowedOwnedUrl(target.href, OWNED_SOURCE_HOSTS)) throw new Error('This relay only accepts pages from your configured source domains.');
+    const response = await undiciFetch(target, {
+      redirect: 'manual',
+      headers: { 'user-agent': 'OwnedVideoRelay/1.0', accept: 'text/html,application/xhtml+xml' },
+      signal: AbortSignal.timeout(15_000)
+    });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      if (!location) throw new Error('The source page returned an invalid redirect.');
+      target = new URL(location, target);
+      continue;
+    }
+    if (!response.ok) throw new Error(`The source page returned HTTP ${response.status}.`);
+    const html = await response.text();
+    if (html.length > MAX_HTML_BYTES) throw new Error('The source page is too large to inspect safely.');
+    return { html, pageUrl: target.href };
+  }
+  throw new Error('Too many redirects from the source page.');
 }
 
 function unescapeUrl(value) {
@@ -168,11 +203,50 @@ async function handleDownload(request, response, token) {
   } catch { json(response, 502, { error: 'The media download failed.' }); }
 }
 
+async function handleRelayExtract(request, response) {
+  let body = '';
+  for await (const chunk of request) {
+    body += chunk;
+    if (body.length > 10_000) return json(response, 413, { error: 'Request is too large.' });
+  }
+  let pageUrl;
+  try { pageUrl = JSON.parse(body).url; } catch { return json(response, 400, { error: 'Enter a valid page URL.' }); }
+  if (!isAllowedOwnedUrl(pageUrl, OWNED_SOURCE_HOSTS)) return json(response, 400, { error: 'Use a page on one of your configured source domains.' });
+  try {
+    const page = await fetchOwnedPage(pageUrl);
+    const sourceUrl = extractCandidates(page.html, page.pageUrl).find((candidate) => isAllowedOwnedUrl(candidate, OWNED_MEDIA_HOSTS));
+    if (!sourceUrl) return json(response, 404, { error: 'No video from a configured media domain was declared on this page.' });
+    const token = randomUUID();
+    relays.set(token, { url: sourceUrl, expires: Date.now() + 10 * 60_000 });
+    return json(response, 200, { sourceUrl, relayUrl: `/api/relay/${token}`, expiresInSeconds: 600 });
+  } catch (error) { return json(response, 502, { error: error.message || 'Could not inspect the source page.' }); }
+}
+
+async function handleRelay(request, response, token) {
+  const item = relays.get(token);
+  relays.delete(token);
+  if (!item || item.expires < Date.now()) return json(response, 410, { error: 'This relay URL expired. Create a new one.' });
+  try {
+    const upstream = await undiciFetch(item.url, { headers: { 'user-agent': 'OwnedVideoRelay/1.0' }, signal: AbortSignal.timeout(60_000) });
+    const contentType = upstream.headers.get('content-type') || '';
+    if (!upstream.ok || !upstream.body || !contentType.startsWith('video/')) return json(response, 502, { error: 'The configured media host did not return a video file.' });
+    response.writeHead(200, {
+      'content-type': contentType,
+      'content-length': upstream.headers.get('content-length') || undefined,
+      'content-disposition': 'inline',
+      'cache-control': 'private, no-store'
+    });
+    Readable.fromWeb(upstream.body).pipe(response);
+  } catch { json(response, 502, { error: 'The video relay failed.' }); }
+}
+
 export const server = createServer(async (request, response) => {
   const path = new URL(request.url, `http://${request.headers.host}`).pathname;
   if (request.method === 'GET' && path === '/health') return json(response, 200, { status: 'ok' });
   if (request.method === 'POST' && path === '/api/extract') return handleExtract(request, response);
+  if (request.method === 'POST' && path === '/api/relay/extract') return handleRelayExtract(request, response);
   if (request.method === 'GET' && path.startsWith('/api/download/')) return handleDownload(request, response, path.slice('/api/download/'.length));
+  if (request.method === 'GET' && path.startsWith('/api/relay/')) return handleRelay(request, response, path.slice('/api/relay/'.length));
   if (request.method === 'GET' && path === '/') return serveFile(response, 'index.html', 'text/html; charset=utf-8');
   if (request.method === 'GET' && path === '/app.js') return serveFile(response, 'app.js', 'text/javascript; charset=utf-8');
   if (request.method === 'GET' && path === '/styles.css') return serveFile(response, 'styles.css', 'text/css; charset=utf-8');

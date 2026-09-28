@@ -38,6 +38,19 @@ Remove the variable or delete it in Railway to return to the host's normal IP ad
 
 Open `http://localhost:3000`, paste a Dreamina/CapCut share URL, and choose **Find video**. If a public video file is found, use **Download**. Links expire after ten minutes and are single-use.
 
+## Relay videos from a site you control
+
+The **Owned-site video relay** is separate from the Dreamina share-link checker. It inspects only publicly declared video markup on your own site, then gives you a one-time URL that streams that video through this app. It is not an open proxy and does not accept arbitrary sites.
+
+The default source and media allowlist is `jonjonjovi.com` and `www.jonjonjovi.com`. To use other domains you control, set these Railway variables (comma-separated hostnames, no protocol or paths):
+
+```text
+OWNED_SOURCE_HOSTS=www.example.com,example.com
+OWNED_MEDIA_HOSTS=cdn.example.com,www.example.com
+```
+
+The page must publicly declare the video in a `<video>`/`<source>` element or Open Graph video metadata, and the actual video host must be listed in `OWNED_MEDIA_HOSTS`. Relay URLs expire after ten minutes and can be opened once.
+
 ## Deploy with GitHub and Railway
 
 1. Create an empty GitHub repository, then commit and push this project:

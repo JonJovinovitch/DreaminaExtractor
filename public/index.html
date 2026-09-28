@@ -11,6 +11,15 @@
         <div class="input-row"><input id="share-url" type="url" required placeholder="https://dreamina.capcut.com/sv2/..." autocomplete="url"><button>Find video</button></div>
       </form>
       <section id="result" aria-live="polite" hidden></section>
+      <hr>
+      <p class="eyebrow">OWNED-SITE VIDEO RELAY</p>
+      <h2>Serve a video from your own page.</h2>
+      <p class="intro small">For pages you control, this finds the publicly declared video and creates a temporary relay URL. By default it accepts only <code>jonjonjovi.com</code>; configure additional owned source and media domains in Railway.</p>
+      <form id="relay-form">
+        <label for="relay-url">Your page URL</label>
+        <div class="input-row"><input id="relay-url" type="url" required placeholder="https://www.jonjonjovi.com/page-with-video" autocomplete="url"><button>Create relay</button></div>
+      </form>
+      <section id="relay-result" aria-live="polite" hidden></section>
       <p class="fine-print">Only download videos you own or are authorized to save. This tool does not bypass accounts, private links, DRM, region restrictions, or platform protections.</p>
     </main>
     <script src="/app.js"></script>
