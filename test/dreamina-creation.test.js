@@ -17,7 +17,6 @@ test('picks the shared creation\'s clean video, not the watermarked copy or the 
   });
   assert.deepEqual(extractDreaminaCreation(html), {
     cleanUrl: 'https://cdn.example.com/clean/',
-    watermarkedUrl: 'https://cdn.example.com/wm/',
     videoId: 'v123'
   });
 });

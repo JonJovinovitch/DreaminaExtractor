@@ -3,24 +3,15 @@
   <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Dreamina Video Extractor</title><link rel="stylesheet" href="/styles.css"></head>
   <body>
     <main>
-      <p class="eyebrow">PUBLIC SHARE LINKS</p>
-      <h1>Get the original<br><em>public video file.</em></h1>
-      <p class="intro">Paste a Dreamina or CapCut share link. We look for a video URL already exposed by that public page, then give you a temporary download link.</p>
+      <p class="eyebrow">DREAMINA SHARE LINKS</p>
+      <h1>Get the video<br><em>without the watermark.</em></h1>
+      <p class="intro">Paste a Dreamina share link. The download starts as soon as the clean video is found.</p>
       <form id="extract-form">
         <label for="share-url">Share link</label>
-        <div class="input-row"><input id="share-url" type="url" required placeholder="https://dreamina.capcut.com/sv2/..." autocomplete="url"><button>Find video</button></div>
+        <div class="input-row"><input id="share-url" type="url" required placeholder="https://dreamina.capcut.com/sv2/..." autocomplete="url"><button>Download</button></div>
       </form>
       <section id="result" aria-live="polite" hidden></section>
-      <hr>
-      <p class="eyebrow">OWNED-SITE VIDEO RELAY</p>
-      <h2>Serve a video from your own page.</h2>
-      <p class="intro small">For pages you control, this finds the publicly declared video and creates a temporary relay URL. By default it accepts only <code>jonjonjovi.com</code>; configure additional owned source and media domains in Railway.</p>
-      <form id="relay-form">
-        <label for="relay-url">Your page URL</label>
-        <div class="input-row"><input id="relay-url" type="url" required placeholder="https://www.jonjonjovi.com/page-with-video" autocomplete="url"><button>Create relay</button></div>
-      </form>
-      <section id="relay-result" aria-live="polite" hidden></section>
-      <p class="fine-print">Only download videos you own or are authorized to save. This tool does not bypass accounts, private links, DRM, region restrictions, or platform protections.</p>
+      <p class="fine-print">Only download videos you own or are authorized to save.</p>
     </main>
     <script src="/app.js"></script>
   </body>
