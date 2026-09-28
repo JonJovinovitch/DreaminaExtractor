@@ -1,43 +1,36 @@
 const form = document.querySelector('#extract-form');
 const input = document.querySelector('#share-url');
 const result = document.querySelector('#result');
-const relayForm = document.querySelector('#relay-form');
-const relayInput = document.querySelector('#relay-url');
-const relayResult = document.querySelector('#relay-result');
+const button = form.querySelector('button');
 
-form.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const button = form.querySelector('button');
-  button.disabled = true; button.textContent = 'Checking…';
-  result.hidden = false; result.className = ''; result.textContent = 'Looking for a publicly exposed video URL…';
+function startDownload(href) {
+  const a = document.createElement('a');
+  a.href = href; a.download = ''; a.hidden = true;
+  document.body.append(a); a.click(); a.remove();
+}
+
+async function extract() {
+  button.disabled = true; button.textContent = 'Finding…';
+  result.hidden = false; result.className = ''; result.textContent = 'Looking for the watermark-free video…';
   try {
     const response = await fetch('/api/extract', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: input.value.trim() }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not inspect that link.');
+    startDownload(data.file.downloadUrl);
     result.className = 'success';
-    result.replaceChildren(...data.files.map((file, index) => {
-      const card = document.createElement('div'); card.className = 'file';
-      const label = document.createElement('span'); label.textContent = `${file.type} ${data.files.length > 1 ? `#${index + 1}` : ''}`;
-      const download = document.createElement('a'); download.href = file.downloadUrl; download.textContent = 'Download';
-      const direct = document.createElement('a'); direct.href = file.url; direct.target = '_blank'; direct.rel = 'noreferrer'; direct.textContent = 'Open source';
-      card.append(label, download, direct); return card;
-    }));
+    // Download tokens are single-use, so "again" re-runs the lookup for a fresh one.
+    const again = document.createElement('a'); again.href = '#'; again.textContent = 'Download again';
+    again.addEventListener('click', (event) => { event.preventDefault(); extract(); });
+    const label = document.createElement('span'); label.textContent = `Downloading ${data.file.filename}`;
+    const card = document.createElement('div'); card.className = 'file';
+    card.append(label, again);
+    result.replaceChildren(card);
   } catch (error) { result.className = 'error'; result.textContent = error.message; }
-  finally { button.disabled = false; button.textContent = 'Find video'; }
-});
+  finally { button.disabled = false; button.textContent = 'Download'; }
+}
 
-relayForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const button = relayForm.querySelector('button');
-  button.disabled = true; button.textContent = 'Creating…';
-  relayResult.hidden = false; relayResult.className = ''; relayResult.textContent = 'Looking for a video declared by your page…';
-  try {
-    const response = await fetch('/api/relay/extract', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: relayInput.value.trim() }) });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Could not create a relay URL.');
-    relayResult.className = 'success';
-    const link = document.createElement('a'); link.href = data.relayUrl; link.target = '_blank'; link.rel = 'noreferrer'; link.textContent = `Open temporary relay (expires in ${data.expiresInSeconds / 60} minutes)`;
-    relayResult.replaceChildren(link);
-  } catch (error) { relayResult.className = 'error'; relayResult.textContent = error.message; }
-  finally { button.disabled = false; button.textContent = 'Create relay'; }
-});
+form.addEventListener('submit', (event) => { event.preventDefault(); extract(); });
+
+// Open the app as /?url=<share link> and it downloads immediately.
+const preset = new URLSearchParams(location.search).get('url');
+if (preset) { input.value = preset; extract(); }

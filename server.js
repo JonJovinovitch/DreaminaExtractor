@@ -11,12 +11,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const ROOT = process.cwd();
 const SHARE_HOSTS = new Set(['dreamina.capcut.com', 'www.capcut.com', 'capcut.com']);
 const downloads = new Map();
-const relays = new Map();
 const MAX_HTML_BYTES = 2_000_000;
-const OWNED_SOURCE_HOSTS = new Set((process.env.OWNED_SOURCE_HOSTS || 'dreamina.capcut.com')
-  .split(',').map((host) => host.trim().toLowerCase()).filter(Boolean));
-const OWNED_MEDIA_HOSTS = new Set((process.env.OWNED_MEDIA_HOSTS || [...OWNED_SOURCE_HOSTS].join(','))
-  .split(',').map((host) => host.trim().toLowerCase()).filter(Boolean));
 const proxyUrl = process.env.OUTBOUND_PROXY_URL;
 
 let proxyDispatcher;
@@ -49,20 +44,6 @@ function isApprovedShareUrl(value) {
   } catch { return false; }
 }
 
-function isMediaUrl(value) {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' && /\.(mp4|webm|mov|m3u8)(?:$|[?#])/i.test(url.pathname);
-  } catch { return false; }
-}
-
-function isAllowedOwnedUrl(value, hosts) {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' && hosts.has(url.hostname.toLowerCase());
-  } catch { return false; }
-}
-
 async function fetchFollowingApprovedRedirects(input) {
   let target = new URL(input);
   for (let hop = 0; hop < 6; hop += 1) {
@@ -89,70 +70,31 @@ async function fetchFollowingApprovedRedirects(input) {
   throw new Error('Too many redirects from the share link.');
 }
 
-async function fetchOwnedPage(input) {
-  let target = new URL(input);
-  for (let hop = 0; hop < 6; hop += 1) {
-    if (!isAllowedOwnedUrl(target.href, OWNED_SOURCE_HOSTS)) throw new Error('This relay only accepts pages from your configured source domains.');
-    const response = await undiciFetch(target, {
-      redirect: 'manual',
-      headers: { 'user-agent': 'OwnedVideoRelay/1.0', accept: 'text/html,application/xhtml+xml' },
-      signal: AbortSignal.timeout(15_000)
-    });
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get('location');
-      if (!location) throw new Error('The source page returned an invalid redirect.');
-      target = new URL(location, target);
-      continue;
-    }
-    if (!response.ok) throw new Error(`The source page returned HTTP ${response.status}.`);
-    const html = await response.text();
-    if (html.length > MAX_HTML_BYTES) throw new Error('The source page is too large to inspect safely.');
-    return { html, pageUrl: target.href };
-  }
-  throw new Error('Too many redirects from the source page.');
+function httpsOrNull(value) {
+  try { return new URL(value).protocol === 'https:' ? new URL(value).href : null; } catch { return null; }
 }
 
-function unescapeUrl(value) {
-  let decoded = value
-    .replaceAll('\\u002F', '/')
-    .replaceAll('\\u0026', '&')
-    .replaceAll('&amp;', '&');
-  while (decoded.includes('\\/')) decoded = decoded.replaceAll('\\/', '/');
-  return decoded;
-}
-
-export function extractCandidates(html, pageUrl) {
-  const values = new Set();
-  const source = unescapeUrl(html);
-  const addCandidate = (candidate, isDeclaredVideo = false) => {
-    try {
-      const absolute = new URL(unescapeUrl(candidate), pageUrl).href;
-      if ((isDeclaredVideo || isMediaUrl(absolute)) && new URL(absolute).protocol === 'https:') values.add(absolute);
-    } catch { /* ignore malformed embedded values */ }
-  };
-
-  // Open Graph tags can put content before property/name, so inspect each tag rather than
-  // assuming a fixed attribute order.
-  for (const tag of source.matchAll(/<meta\b[^>]*>/gi)) {
-    const property = /(?:property|name)\s*=\s*["']([^"']+)["']/i.exec(tag[0])?.[1]?.toLowerCase();
-    const content = /content\s*=\s*["']([^"']+)["']/i.exec(tag[0])?.[1];
-    if (content && ['og:video', 'og:video:url', 'twitter:player:stream'].includes(property)) addCandidate(content, true);
+// Dreamina share pages embed their data as JSON in <script id="__MODERN_ROUTER_DATA__">.
+// The shared video itself is page_info.creation; its metadata.video_url is the clean copy,
+// while download_info.watermark_ending_url is the watermarked copy the page's player shows
+// (not used).
+// page_info.creation_list holds unrelated "more videos" and is deliberately ignored.
+export function extractDreaminaCreation(html) {
+  const script = /<script\b[^>]*\bid\s*=\s*["']__MODERN_ROUTER_DATA__["'][^>]*>([\s\S]*?)<\/script>/i.exec(html);
+  if (!script) return null;
+  let data;
+  try { data = JSON.parse(script[1]); } catch { return null; }
+  for (const loader of Object.values(data?.loaderData || {})) {
+    const creation = loader?.pageData?.shareLandingPage?.data?.page_info?.creation;
+    const meta = creation?.metadata;
+    const cleanUrl = httpsOrNull(meta?.video_url) || httpsOrNull(meta?.download_info?.url);
+    if (!cleanUrl) continue;
+    return {
+      cleanUrl,
+      videoId: String(meta?.video_id || creation?.id || '').replace(/[^\w-]/g, '').slice(0, 64) || null
+    };
   }
-
-  const declaredVideoPatterns = [
-    /<(?:video|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi,
-    /["'](?:video_url|videoUrl|play_url|playUrl|download_url|downloadUrl)["']\s*:\s*["']([^"']+)["']/gi
-  ];
-  for (const pattern of declaredVideoPatterns) {
-    for (const match of source.matchAll(pattern)) {
-      addCandidate(match[1], true);
-    }
-  }
-
-  // Capture direct file URLs in normal and JSON-escaped form. These need an explicit
-  // media extension because they have not been declared as a video by the page.
-  for (const match of source.matchAll(/https?:\/\/[^"'\\\s<>]+?\.(?:mp4|webm|mov|m3u8)(?:[?#][^"'\\\s<>]*)?/gi)) addCandidate(match[0]);
-  return [...values].slice(0, 10);
+  return null;
 }
 
 function serveFile(response, name, type) {
@@ -174,14 +116,12 @@ async function handleExtract(request, response) {
   if (!isApprovedShareUrl(shareUrl)) return json(response, 400, { error: 'Use an https Dreamina or CapCut share link.' });
   try {
     const { html, pageUrl } = await fetchFollowingApprovedRedirects(shareUrl);
-    const candidates = extractCandidates(html, pageUrl);
-    if (!candidates.length) return json(response, 404, { error: 'No public direct-video URL was exposed on this page. It may be region-restricted, private, or use protected streaming.' });
-    const files = candidates.map((url) => {
-      const token = randomUUID();
-      downloads.set(token, { url, expires: Date.now() + 10 * 60_000, referer: pageUrl });
-      return { type: /\.m3u8(?:$|[?#])/i.test(url) ? 'HLS playlist' : 'Video file', url, downloadUrl: `/api/download/${token}` };
-    });
-    return json(response, 200, { files });
+    const creation = extractDreaminaCreation(html);
+    if (!creation) return json(response, 404, { error: 'No watermark-free video was found on this page. Check that it is a public Dreamina share link.' });
+    const filename = `dreamina-${creation.videoId || 'video'}.mp4`;
+    const token = randomUUID();
+    downloads.set(token, { url: creation.cleanUrl, filename, expires: Date.now() + 10 * 60_000, referer: pageUrl });
+    return json(response, 200, { file: { filename, url: creation.cleanUrl, downloadUrl: `/api/download/${token}` } });
   } catch (error) { return json(response, 502, { error: error.message || 'Could not retrieve the share page.' }); }
 }
 
@@ -192,61 +132,22 @@ async function handleDownload(request, response, token) {
   try {
     const upstream = await fetchUpstream(item.url, { headers: { referer: item.referer, 'user-agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(60_000) });
     if (!upstream.ok || !upstream.body) return json(response, 502, { error: 'The media host did not provide the file.' });
-    const extension = extname(new URL(item.url).pathname) || '.mp4';
+    const filename = item.filename || `dreamina-video${extname(new URL(item.url).pathname) || '.mp4'}`;
     response.writeHead(200, {
       'content-type': upstream.headers.get('content-type') || 'application/octet-stream',
       'content-length': upstream.headers.get('content-length') || undefined,
-      'content-disposition': `attachment; filename="dreamina-video${extension}"`,
+      'content-disposition': `attachment; filename="${filename}"`,
       'cache-control': 'no-store'
     });
     Readable.fromWeb(upstream.body).pipe(response);
   } catch { json(response, 502, { error: 'The media download failed.' }); }
 }
 
-async function handleRelayExtract(request, response) {
-  let body = '';
-  for await (const chunk of request) {
-    body += chunk;
-    if (body.length > 10_000) return json(response, 413, { error: 'Request is too large.' });
-  }
-  let pageUrl;
-  try { pageUrl = JSON.parse(body).url; } catch { return json(response, 400, { error: 'Enter a valid page URL.' }); }
-  if (!isAllowedOwnedUrl(pageUrl, OWNED_SOURCE_HOSTS)) return json(response, 400, { error: 'Use a page on one of your configured source domains.' });
-  try {
-    const page = await fetchOwnedPage(pageUrl);
-    const sourceUrl = extractCandidates(page.html, page.pageUrl).find((candidate) => isAllowedOwnedUrl(candidate, OWNED_MEDIA_HOSTS));
-    if (!sourceUrl) return json(response, 404, { error: 'No video from a configured media domain was declared on this page.' });
-    const token = randomUUID();
-    relays.set(token, { url: sourceUrl, expires: Date.now() + 10 * 60_000 });
-    return json(response, 200, { sourceUrl, relayUrl: `/api/relay/${token}`, expiresInSeconds: 600 });
-  } catch (error) { return json(response, 502, { error: error.message || 'Could not inspect the source page.' }); }
-}
-
-async function handleRelay(request, response, token) {
-  const item = relays.get(token);
-  relays.delete(token);
-  if (!item || item.expires < Date.now()) return json(response, 410, { error: 'This relay URL expired. Create a new one.' });
-  try {
-    const upstream = await undiciFetch(item.url, { headers: { 'user-agent': 'OwnedVideoRelay/1.0' }, signal: AbortSignal.timeout(60_000) });
-    const contentType = upstream.headers.get('content-type') || '';
-    if (!upstream.ok || !upstream.body || !contentType.startsWith('video/')) return json(response, 502, { error: 'The configured media host did not return a video file.' });
-    response.writeHead(200, {
-      'content-type': contentType,
-      'content-length': upstream.headers.get('content-length') || undefined,
-      'content-disposition': 'inline',
-      'cache-control': 'private, no-store'
-    });
-    Readable.fromWeb(upstream.body).pipe(response);
-  } catch { json(response, 502, { error: 'The video relay failed.' }); }
-}
-
 export const server = createServer(async (request, response) => {
   const path = new URL(request.url, `http://${request.headers.host}`).pathname;
   if (request.method === 'GET' && path === '/health') return json(response, 200, { status: 'ok' });
   if (request.method === 'POST' && path === '/api/extract') return handleExtract(request, response);
-  if (request.method === 'POST' && path === '/api/relay/extract') return handleRelayExtract(request, response);
   if (request.method === 'GET' && path.startsWith('/api/download/')) return handleDownload(request, response, path.slice('/api/download/'.length));
-  if (request.method === 'GET' && path.startsWith('/api/relay/')) return handleRelay(request, response, path.slice('/api/relay/'.length));
   if (request.method === 'GET' && path === '/') return serveFile(response, 'index.html', 'text/html; charset=utf-8');
   if (request.method === 'GET' && path === '/app.js') return serveFile(response, 'app.js', 'text/javascript; charset=utf-8');
   if (request.method === 'GET' && path === '/styles.css') return serveFile(response, 'styles.css', 'text/css; charset=utf-8');
