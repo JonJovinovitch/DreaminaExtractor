@@ -38,6 +38,12 @@ Remove the variable or delete it in Railway to return to the host's normal IP ad
 
 Open `http://localhost:3000`, paste a Dreamina/CapCut share URL, and choose **Find video**. If a public video file is found, use **Download**. Links expire after ten minutes and are single-use.
 
+For Dreamina share pages, the app reads the page's embedded data (`__MODERN_ROUTER_DATA__` → `page_info.creation.metadata.video_url`), which is the clean copy of the shared video without the watermark, and **starts that download automatically**. The watermarked copy the page's own player shows is listed as a second option. To skip the form entirely, open the app with the link in the address bar:
+
+```text
+http://localhost:3000/?url=https://dreamina.capcut.com/sv2/ZSb2AUNf3/
+```
+
 ## Relay videos from a site you control
 
 The **Owned-site video relay** is separate from the Dreamina share-link checker. It inspects only publicly declared video markup on your own site, then gives you a one-time URL that streams that video through this app. It is not an open proxy and does not accept arbitrary sites.

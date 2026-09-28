@@ -155,6 +155,33 @@ export function extractCandidates(html, pageUrl) {
   return [...values].slice(0, 10);
 }
 
+function httpsOrNull(value) {
+  try { return new URL(value).protocol === 'https:' ? new URL(value).href : null; } catch { return null; }
+}
+
+// Dreamina share pages embed their data as JSON in <script id="__MODERN_ROUTER_DATA__">.
+// The shared video itself is page_info.creation; its metadata.video_url is the clean copy,
+// while download_info.watermark_ending_url is the watermarked copy the page's player shows.
+// page_info.creation_list holds unrelated "more videos" and is deliberately ignored.
+export function extractDreaminaCreation(html) {
+  const script = /<script\b[^>]*\bid\s*=\s*["']__MODERN_ROUTER_DATA__["'][^>]*>([\s\S]*?)<\/script>/i.exec(html);
+  if (!script) return null;
+  let data;
+  try { data = JSON.parse(script[1]); } catch { return null; }
+  for (const loader of Object.values(data?.loaderData || {})) {
+    const creation = loader?.pageData?.shareLandingPage?.data?.page_info?.creation;
+    const meta = creation?.metadata;
+    const cleanUrl = httpsOrNull(meta?.video_url) || httpsOrNull(meta?.download_info?.url);
+    if (!cleanUrl) continue;
+    return {
+      cleanUrl,
+      watermarkedUrl: httpsOrNull(meta?.download_info?.watermark_ending_url),
+      videoId: String(meta?.video_id || creation?.id || '').replace(/[^\w-]/g, '').slice(0, 64) || null
+    };
+  }
+  return null;
+}
+
 function serveFile(response, name, type) {
   const file = join(ROOT, 'public', name);
   if (!existsSync(file)) return false;
@@ -174,13 +201,25 @@ async function handleExtract(request, response) {
   if (!isApprovedShareUrl(shareUrl)) return json(response, 400, { error: 'Use an https Dreamina or CapCut share link.' });
   try {
     const { html, pageUrl } = await fetchFollowingApprovedRedirects(shareUrl);
+    const register = (url, filename) => {
+      const token = randomUUID();
+      downloads.set(token, { url, filename, expires: Date.now() + 10 * 60_000, referer: pageUrl });
+      return `/api/download/${token}`;
+    };
+
+    const creation = extractDreaminaCreation(html);
+    if (creation) {
+      const base = `dreamina-${creation.videoId || 'video'}`;
+      const files = [{ type: 'Video (no watermark)', primary: true, url: creation.cleanUrl, downloadUrl: register(creation.cleanUrl, `${base}.mp4`) }];
+      if (creation.watermarkedUrl && creation.watermarkedUrl !== creation.cleanUrl) {
+        files.push({ type: 'Video (watermarked)', url: creation.watermarkedUrl, downloadUrl: register(creation.watermarkedUrl, `${base}-watermarked.mp4`) });
+      }
+      return json(response, 200, { files });
+    }
+
     const candidates = extractCandidates(html, pageUrl);
     if (!candidates.length) return json(response, 404, { error: 'No public direct-video URL was exposed on this page. It may be region-restricted, private, or use protected streaming.' });
-    const files = candidates.map((url) => {
-      const token = randomUUID();
-      downloads.set(token, { url, expires: Date.now() + 10 * 60_000, referer: pageUrl });
-      return { type: /\.m3u8(?:$|[?#])/i.test(url) ? 'HLS playlist' : 'Video file', url, downloadUrl: `/api/download/${token}` };
-    });
+    const files = candidates.map((url) => ({ type: /\.m3u8(?:$|[?#])/i.test(url) ? 'HLS playlist' : 'Video file', url, downloadUrl: register(url) }));
     return json(response, 200, { files });
   } catch (error) { return json(response, 502, { error: error.message || 'Could not retrieve the share page.' }); }
 }
@@ -192,11 +231,11 @@ async function handleDownload(request, response, token) {
   try {
     const upstream = await fetchUpstream(item.url, { headers: { referer: item.referer, 'user-agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(60_000) });
     if (!upstream.ok || !upstream.body) return json(response, 502, { error: 'The media host did not provide the file.' });
-    const extension = extname(new URL(item.url).pathname) || '.mp4';
+    const filename = item.filename || `dreamina-video${extname(new URL(item.url).pathname) || '.mp4'}`;
     response.writeHead(200, {
       'content-type': upstream.headers.get('content-type') || 'application/octet-stream',
       'content-length': upstream.headers.get('content-length') || undefined,
-      'content-disposition': `attachment; filename="dreamina-video${extension}"`,
+      'content-disposition': `attachment; filename="${filename}"`,
       'cache-control': 'no-store'
     });
     Readable.fromWeb(upstream.body).pipe(response);
