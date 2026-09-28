@@ -78,26 +78,45 @@ async function fetchFollowingApprovedRedirects(input) {
 }
 
 function unescapeUrl(value) {
-  return value.replaceAll('\\u002F', '/').replaceAll('\\/', '/').replaceAll('\\u0026', '&').replaceAll('&amp;', '&');
+  let decoded = value
+    .replaceAll('\\u002F', '/')
+    .replaceAll('\\u0026', '&')
+    .replaceAll('&amp;', '&');
+  while (decoded.includes('\\/')) decoded = decoded.replaceAll('\\/', '/');
+  return decoded;
 }
 
 export function extractCandidates(html, pageUrl) {
   const values = new Set();
-  const patterns = [
-    /<meta[^>]+(?:property|name)=["'](?:og:video(?::url)?|twitter:player:stream)["'][^>]+content=["']([^"']+)["']/gi,
-    /<video[^>]+src=["']([^"']+)["']/gi,
-    /<source[^>]+src=["']([^"']+)["']/gi,
-    /https?:\\?\/\\?\/[^"'\\\s<>]+?\.(?:mp4|webm|mov|m3u8)(?:[?#][^"'\\\s<>]*)?/gi
+  const source = unescapeUrl(html);
+  const addCandidate = (candidate, isDeclaredVideo = false) => {
+    try {
+      const absolute = new URL(unescapeUrl(candidate), pageUrl).href;
+      if ((isDeclaredVideo || isMediaUrl(absolute)) && new URL(absolute).protocol === 'https:') values.add(absolute);
+    } catch { /* ignore malformed embedded values */ }
+  };
+
+  // Open Graph tags can put content before property/name, so inspect each tag rather than
+  // assuming a fixed attribute order.
+  for (const tag of source.matchAll(/<meta\b[^>]*>/gi)) {
+    const property = /(?:property|name)\s*=\s*["']([^"']+)["']/i.exec(tag[0])?.[1]?.toLowerCase();
+    const content = /content\s*=\s*["']([^"']+)["']/i.exec(tag[0])?.[1];
+    if (content && ['og:video', 'og:video:url', 'twitter:player:stream'].includes(property)) addCandidate(content, true);
+  }
+
+  const declaredVideoPatterns = [
+    /<(?:video|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi,
+    /["'](?:video_url|videoUrl|play_url|playUrl|download_url|downloadUrl)["']\s*:\s*["']([^"']+)["']/gi
   ];
-  for (const pattern of patterns) {
-    for (const match of html.matchAll(pattern)) {
-      const candidate = unescapeUrl(match[1] || match[0]);
-      try {
-        const absolute = new URL(candidate, pageUrl).href;
-        if (isMediaUrl(absolute)) values.add(absolute);
-      } catch { /* ignore malformed embedded values */ }
+  for (const pattern of declaredVideoPatterns) {
+    for (const match of source.matchAll(pattern)) {
+      addCandidate(match[1], true);
     }
   }
+
+  // Capture direct file URLs in normal and JSON-escaped form. These need an explicit
+  // media extension because they have not been declared as a video by the page.
+  for (const match of source.matchAll(/https?:\/\/[^"'\\\s<>]+?\.(?:mp4|webm|mov|m3u8)(?:[?#][^"'\\\s<>]*)?/gi)) addCandidate(match[0]);
   return [...values].slice(0, 10);
 }
 
